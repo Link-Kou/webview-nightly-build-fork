@@ -1,0 +1,176 @@
+# Plan is mostly documented here. https://github.com/webview/webview/pull/1056#issuecomment-1871737900
+# Can check files with: file libwebview.so & readelf -A libwebview.so and
+
+name: Build Artifacts
+on: [push, pull_request]
+
+jobs:
+  # ------------------------
+  # Linux
+  # ------------------------
+
+  build-linux-gnu:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86
+            arch: i386
+            distro: bullseye
+          - name: x86_64
+            arch: amd64
+            distro: bullseye
+          - name: armhf
+            arch: armv6
+            distro: bullseye
+          - name: aarch64
+            arch: aarch64
+            distro: bullseye
+          # - name: riscv64
+          #   arch: riscv64
+          #   distro: ubuntu20.04
+          # - name: s390x
+          #   arch: s390x
+          #   distro: bullseye
+          # - name: ppc64le
+          #   arch: ppc64le
+          #   distro: bullseye
+    env:
+      CXX_STD: c++11
+    steps:
+      - uses: actions/checkout@v4
+      - uses: vxcontrol/run-on-arch-action@0.9.0 # https://github.com/marketplace/actions/run-on-architecture-vxcontrol
+        name: Setup environment
+        with:
+          dockerRunArgs: |
+            --volume "${PWD}:/home/build"
+          arch: ${{ matrix.arch }}
+          distro: ${{ matrix.distro }}
+          install: |
+            apt update
+            apt install build-essential gcc curl clang clang-format clang-tidy libwebkit2gtk-4.0-dev -y
+          run: |
+            cd /home/build
+            ${{ matrix.name == 'armhf' && 'TARGET_ARCH=armv6+fp' || '' }}
+            ${{ matrix.name == 'armel' && 'TARGET_ARCH=armv6+nofp' || '' }}
+            ./script/build.sh info clean format deps check build
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: "Linux (GNU, ${{ env.CXX_STD }}, ${{ matrix.name }})"
+          path: "./build/library/*"
+          if-no-files-found: "error"
+          retention-days: 0 # Default, based on the repo settings.
+
+  build-linux-musl:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86
+            arch: x86
+          - name: x86_64
+            arch: x86_64
+          - name: armhf
+            arch: armhf
+          - name: aarch64
+            arch: aarch64
+          # - name: riscv64
+          #   arch: riscv64
+          # - name: s390x
+          #   arch: s390x
+          # - name: ppc64le
+          #   arch: ppc64le
+    env:
+      CXX_STD: c++11
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jirutka/setup-alpine@v1 # https://github.com/marketplace/actions/setup-alpine-linux-environment
+        with:
+          arch: ${{ matrix.arch }}
+          branch: v3.15
+          packages: >
+            sudo
+            bash
+      - name: Add edge/main repository
+        run: echo "https://dl-cdn.alpinelinux.org/alpine/edge/main" | sudo tee -a /etc/apk/repositories
+        shell: alpine.sh {0}
+      - name: Add edge/community repository
+        run: echo "https://dl-cdn.alpinelinux.org/alpine/edge/community" | sudo tee -a /etc/apk/repositories
+        shell: alpine.sh {0}
+      - name: Update dependencies
+        run: sudo apk update
+        shell: alpine.sh {0}
+      - name: Install dependencies
+        run: sudo apk add --upgrade build-base clang17 clang17-extra-tools webkit2gtk-dev # 4.0 is in the regular package.
+        shell: alpine.sh {0}
+      - name: Build and run tests
+        run: ${{ matrix.name == 'armhf' && 'TARGET_ARCH=armv6+fp' || '' }} ${{ matrix.name == 'armel' && 'TARGET_ARCH=armv6+nofp' || '' }} ./script/build.sh info clean format deps check build
+        shell: alpine.sh {0}
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: "Linux (MUSL, ${{ env.CXX_STD }}, ${{ matrix.name }})"
+          path: "./build/library/*"
+          if-no-files-found: "error"
+          retention-days: 0 # Default, based on the repo settings.
+
+  # ------------------------
+  # macOS
+  # ------------------------
+
+  build-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86_64
+            os: macos-13
+          - name: aarch64
+            os: macos-14
+    runs-on: ${{ matrix.os }}
+    env:
+      CXX_STD: c++11
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run tests
+        run: ./script/build.sh info clean format deps check build test
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: "macOS (${{ env.CXX_STD }}, ${{ matrix.name }})"
+          path: "./build/library/*"
+          if-no-files-found: "error"
+          retention-days: 0 # Default, based on the repo settings.
+
+  # ------------------------
+  # Windows
+  # ------------------------
+
+  build-windows-msvc:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86
+            arch: x86
+          - name: x86_64
+            arch: x64
+    env:
+      CXX_STD: c++14
+      TARGET_ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run tests
+        run: ./script/build.bat info clean format deps check build test
+        shell: cmd
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: "Windows (MSVC, ${{ env.CXX_STD }}, ${{ matrix.name }})"
+          path: "./build/library/*"
+          if-no-files-found: "error"
+          retention-days: 0 # Default, based on the repo settings.
